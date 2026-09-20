@@ -141,4 +141,9 @@ describe('SPAWN_PEER_TOOL_DESCRIPTION', () => {
             /pass permissionmode only when the operator asked/
         )
     })
+
+    it('warns agents not to pass permissionMode default (treated as omit)', () => {
+        expect(SPAWN_PEER_TOOL_DESCRIPTION.toLowerCase()).toMatch(/do not pass permissionmode/)
+        expect(SPAWN_PEER_TOOL_DESCRIPTION.toLowerCase()).toMatch(/"default"/)
+    })
 })
