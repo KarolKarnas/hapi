@@ -55,6 +55,21 @@ export class MessageStore {
         this.db = db
     }
 
+    // Read only references belonging to this session; content may be zstd encoded.
+    findGeneratedImageFile(sessionId: string, imageId: string): string | undefined {
+        const rows = this.db.query(`SELECT content FROM messages
+            WHERE session_id = ? AND local_id LIKE '%:generated_image' ORDER BY seq DESC`)
+            .all(sessionId) as { content: string | Uint8Array }[]
+        for (const row of rows) {
+            const envelope = decodeMessageContent(row.content) as any
+            const data = envelope?.content?.data
+            if (envelope?.role === 'agent' && envelope?.content?.type === 'codex'
+                && data?.type === 'generated-image' && data?.imageId === imageId
+                && typeof data.fileName === 'string') return data.fileName
+        }
+        return undefined
+    }
+
     addMessage(sessionId: string, content: unknown, localId?: string, scheduledAt?: number | null, createdAt?: number): StoredMessage {
         return addMessage(this.db, sessionId, content, localId, scheduledAt, createdAt)
     }

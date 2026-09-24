@@ -1,3 +1,4 @@
+import { readLocalCodexImage } from './localCodexImages'
 /**
  * Sync Engine for HAPI Telegram Bot (Direct Connect)
  *
@@ -3945,6 +3946,15 @@ export class SyncEngine {
     }
 
     async readGeneratedImage(sessionId: string, imageId: string): Promise<RpcGeneratedImageResponse> {
+        const session = this.getSession(sessionId)
+        const root = process.env.HAPI_LOCAL_CODEX_HOME
+        const machineId = process.env.HAPI_LOCAL_CODEX_MACHINE_ID
+        if (root && machineId && session?.metadata?.machineId === machineId
+            && session.metadata.flavor === 'codex') {
+            const fileName = this.store.messages.findGeneratedImageFile(sessionId, imageId)
+            const result = await readLocalCodexImage(root, session.metadata.codexSessionId, fileName)
+            if (result) return result
+        }
         return await this.rpcGateway.readGeneratedImage(sessionId, imageId)
     }
 
