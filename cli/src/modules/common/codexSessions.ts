@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, join, relative } from 'node:path'
 import { homedir } from 'node:os'
 import { AGENT_MESSAGE_PAYLOAD_TYPE } from '@hapi/protocol'
@@ -226,6 +226,18 @@ function convertCodexRecordToImportedMessage(record: Record<string, unknown>): C
     if (!type || !payload) return null
     if (type === 'event_msg') {
         const eventType = asString(payload.type)
+        if (eventType === 'item_completed') {
+            const item = asRecord(payload.item)
+            const id = asString(item?.id)
+            if (item?.kind === 'image_gen.generation' && item.status === 'completed'
+                && id && /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) {
+                return buildImportedAgentMessage({
+                    type: 'generated-image',
+                    imageId: createHash('sha256').update(`${payload.thread_id}:${id}`).digest('hex'),
+                    fileName: `${id}.png`, mimeType: 'image/png',
+                })
+            }
+        }
         if (eventType === 'user_message') {
             const text = asString(payload.message) ?? asString(payload.text) ?? asString(payload.content)
             return text && !shouldIgnoreSyntheticUserMessage(text) ? buildImportedUserMessage(text) : null

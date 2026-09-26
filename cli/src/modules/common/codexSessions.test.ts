@@ -181,3 +181,33 @@ describe('listLocalCodexSessionSummaries', () => {
         rmSync(root, { recursive: true, force: true })
     })
 })
+
+describe('persisted generated image imports', () => {
+    it('projects completed native image events without copying base64 into HAPI messages', () => {
+        const previous = process.env.CODEX_HOME
+        const root = mkdtempSync(join(tmpdir(), 'codex-images-'))
+        process.env.CODEX_HOME = root
+        try {
+            mkdirSync(join(root, 'sessions'))
+            const id = '12345678-1234-1234-1234-123456789abc'
+            writeFileSync(join(root, 'sessions', `rollout-${id}.jsonl`), [
+                { type: 'session_meta', payload: { id, cwd: '/tmp/project' } },
+                { type: 'event_msg', payload: { type: 'item_completed', thread_id: id,
+                    item: { kind: 'image_gen.generation', status: 'completed', id: 'exec-example', result: 'large-base64-value' } } },
+                { type: 'event_msg', payload: { type: 'item_completed', thread_id: id,
+                    item: { kind: 'image_gen.generation', status: 'completed', id: '../escape' } } },
+            ].map((record) => JSON.stringify(record)).join('\n'))
+            const [session] = listLocalCodexSessionsWithMessagesByIds(new Set([id]))
+            expect(session.messages).toHaveLength(1)
+            expect(JSON.stringify(session.messages)).not.toContain('large-base64-value')
+            expect((session.messages[0].content as any).data).toMatchObject({
+                type: 'generated-image', fileName: 'exec-example.png', mimeType: 'image/png',
+            })
+            expect((session.messages[0].content as any).data.imageId).toMatch(/^[a-f0-9]{64}$/)
+        } finally {
+            if (previous === undefined) delete process.env.CODEX_HOME
+            else process.env.CODEX_HOME = previous
+            rmSync(root, { recursive: true, force: true })
+        }
+    })
+})

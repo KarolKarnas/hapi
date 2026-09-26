@@ -58,3 +58,13 @@ test('image reference is persisted and scoped to its session, including compress
     expect(store.messages.findGeneratedImageFile(b.id, 'a'.repeat(64))).toBeUndefined()
     expect(store.messages.findGeneratedImageFile(a.id, 'b'.repeat(64))).toBeUndefined()
 })
+
+test('resolves imported image references without a live-event local ID', () => {
+    const store = new Store(':memory:')
+    const session = store.sessions.getOrCreateSession('imported-media', {}, {}, 'default')
+    store.messages.addMessage(session.id, { role: 'agent', content: { type: 'codex', data: {
+        type: 'generated-image', imageId: 'b'.repeat(64), fileName: 'exec-import.png',
+    } } })
+    expect(store.messages.findGeneratedImageFile(session.id, 'b'.repeat(64))).toBe('exec-import.png')
+    expect(store.messages.findGeneratedImageFile(session.id, 'c'.repeat(64))).toBeUndefined()
+})

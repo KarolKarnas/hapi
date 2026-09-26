@@ -995,7 +995,7 @@ function buildImportedSessionMetadata(
         path,
         host,
         os: osValue,
-        name: data.title,
+        name: existingMetadata?.name ?? data.title,
         summary: summaryText
             ? {
                 text: summaryText,
@@ -1082,6 +1082,7 @@ function normalizeComparableContent(content: unknown): string | null {
         if (!body || body.type !== AGENT_MESSAGE_PAYLOAD_TYPE) {
             return null
         }
+        if (asRecord(body.data)?.type === 'generated-image') return null
         return stableSerialize({
             role: 'agent',
             data: normalizeComparableAgentData(body.data)
@@ -1196,6 +1197,33 @@ function selectImportTargetSession(
         sessionId: bestSessionId,
         comparablePrefixCount: Math.max(0, bestPrefixCount)
     }
+}
+
+// Live app-server messages also contain status, usage and replay events which are
+// absent/different in transcript imports. Match the ordered conversation, then append
+// only the native suffix after that prefix; never rewrite existing HAPI messages.
+function conversationAnchors(messages: unknown[]): { key: string; index: number }[] {
+    const result: { key: string; index: number }[] = []
+    messages.forEach((content, index) => {
+        const row = asRecord(content)
+        const body = asRecord(row?.content)
+        const data = asRecord(body?.data)
+        let role: string | null = null
+        let text: string | null = null
+        if (row?.role === 'user' && body?.type === 'text' && typeof body.text === 'string') {
+            role = 'user'; text = body.text
+            if (text.startsWith('<recommended_plugins>') || text.startsWith('# AGENTS.md instructions') || text.startsWith('<environment_context>')) return
+        } else if (row?.role === 'agent' && body?.type === AGENT_MESSAGE_PAYLOAD_TYPE
+            && data?.type === 'message' && typeof data.message === 'string') {
+            role = 'agent'; text = data.message
+        }
+        if (role === null || text === null) return
+        const key = stableSerialize({ role, text: normalizeComparableText(text) })
+        // Resuming a native thread can replay its last assistant response.
+        if (role === 'agent' && result.at(-1)?.key === key) return
+        result.push({ key, index })
+    })
+    return result
 }
 
 function listDuplicateCodexSessionGroups(
@@ -2020,6 +2048,26 @@ function importSingleCodexSession(options: {
             importedComparableMessages,
             options.machineId
         )
+        const related = candidates.filter((candidate) => getCodexImportIds(candidate.metadata).includes(options.codexSessionId))
+        if (process.env.HAPI_CODEX_SAFE_IMPORT === '1' && related.some((candidate) => candidate.active)) {
+            throw new Error('Codex history is active in HAPI; retry after the session stops')
+        }
+        if (process.env.HAPI_CODEX_SAFE_IMPORT === '1' && !target.sessionId && related.length > 0) {
+            const native = transcript.messages.filter((message) => normalizeComparableContent(message) !== null)
+            const incoming = conversationAnchors(native)
+            const compatible = related.filter((candidate) => isImportCandidateReusable(candidate)
+                && (!options.machineId || candidate.metadata?.machineId === options.machineId))
+                .map((candidate) => ({ candidate, anchors: conversationAnchors(
+                    options.store.messages.getAllMessages(candidate.sessionId).map((row) => row.content)) }))
+                .filter(({ anchors }) => anchors.length > 0 && anchors.length <= incoming.length
+                    && anchors.every((anchor, index) => anchor.key === incoming[index].key))
+                .sort((a, b) => b.anchors.length - a.anchors.length)
+            if (compatible.length !== 1) {
+                throw new Error('Codex history diverges or has ambiguous HAPI targets; automatic duplication refused')
+            }
+            target.sessionId = compatible[0].candidate.sessionId
+            target.comparablePrefixCount = incoming[compatible[0].anchors.length]?.index ?? native.length
+        }
         const engine = options.getSyncEngine?.() ?? null
         const existingStored = target.sessionId ? options.store.sessions.getSessionByNamespace(target.sessionId, options.namespace) : null
         const metadata = buildImportedSessionMetadata(
@@ -2068,7 +2116,20 @@ function importSingleCodexSession(options: {
         }
 
         const comparablePrefixCount = sessionId ? target.comparablePrefixCount : 0
-        const messagesToAppend = transcript.messages.slice(comparablePrefixCount)
+        const existingImages = new Set(options.store.messages.getAllMessages(sessionId)
+            .map((row) => asRecord(asRecord(asRecord(row.content)?.content)?.data)?.imageId)
+            .filter((id): id is string => typeof id === 'string'))
+        let textIndex = 0
+        const messagesToAppend = transcript.messages.filter((message) => {
+            const data = asRecord(asRecord(asRecord(message)?.content)?.data)
+            if (data?.type === 'generated-image') {
+                if (typeof data.imageId !== 'string' || existingImages.has(data.imageId)) return false
+                existingImages.add(data.imageId)
+                return true
+            }
+            if (normalizeComparableContent(message) === null) return false
+            return textIndex++ >= comparablePrefixCount
+        })
         const targetIsActive = Boolean(candidates.find((candidate) => candidate.sessionId === sessionId)?.active)
         if (targetIsActive && messagesToAppend.length > 0) {
             throw new Error('当前会话正在运行且 Codex transcript 有新消息，停止或归档后再同步，避免消息顺序错乱')

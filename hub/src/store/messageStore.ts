@@ -58,7 +58,7 @@ export class MessageStore {
     // Read only references belonging to this session; content may be zstd encoded.
     findGeneratedImageFile(sessionId: string, imageId: string): string | undefined {
         const rows = this.db.query(`SELECT content FROM messages
-            WHERE session_id = ? AND local_id LIKE '%:generated_image' ORDER BY seq DESC`)
+            WHERE session_id = ? AND (local_id IS NULL OR local_id LIKE '%:generated_image') ORDER BY seq DESC`)
             .all(sessionId) as { content: string | Uint8Array }[]
         for (const row of rows) {
             const envelope = decodeMessageContent(row.content) as any

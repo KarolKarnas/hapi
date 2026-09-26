@@ -1395,3 +1395,63 @@ describe('Codex Desktop restart helpers', () => {
         expect(getDarwinCodexOpenArgs('Codex')).toEqual(['-a', 'Codex'])
     })
 })
+
+it('adds missing image cards once while preserving an existing text import and its continuation', async () => {
+    const store = new Store(':memory:')
+    const id = randomUUID()
+    const user = { role: 'user' as const, content: { type: 'text' as const, text: 'hello' }, meta: { sentFrom: 'cli' as const } }
+    const image = { role: 'agent' as const, content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'generated-image', imageId: 'a'.repeat(64), fileName: 'exec-test.png' } }, meta: { sentFrom: 'cli' as const } }
+    const base = { id, title: 'test', file: '/tmp/test.jsonl', cwd: '/tmp/project', modifiedAt: 1 }
+    const run = (messages: Array<typeof user | typeof image>) => importSelectedCodexSessions({
+        codexSessionIds: [id], store, namespace: 'default', localSessions: [{ ...base, messages }],
+    })
+    const first = await run([user])
+    const second = await run([image, user])
+    expect(second.hapiSessionIds).toEqual(first.hapiSessionIds)
+    await run([image, user])
+    const sid = first.hapiSessionIds![0]
+    expect(store.messages.getAllMessages(sid)).toHaveLength(2)
+    await run([image, user, { ...user, content: { type: 'text', text: 'continued' } }])
+    expect(store.messages.getAllMessages(sid)).toHaveLength(3)
+    const previous = process.env.HAPI_CODEX_SAFE_IMPORT
+    process.env.HAPI_CODEX_SAFE_IMPORT = '1'
+    try {
+        const conflict = await run([{ ...user, content: { type: 'text', text: 'different history' } }])
+        expect(conflict.success).toBe(false)
+        expect(store.messages.getAllMessages(sid)).toHaveLength(3)
+    } finally {
+        if (previous === undefined) delete process.env.HAPI_CODEX_SAFE_IMPORT
+        else process.env.HAPI_CODEX_SAFE_IMPORT = previous
+    }
+})
+
+it('safely appends a native continuation after a live HAPI turn and replay/status events', async () => {
+    const store = new Store(':memory:')
+    const id = randomUUID()
+    const u = (text: string) => ({ role: 'user' as const, content: { type: 'text' as const, text }, meta: { sentFrom: 'cli' as const } })
+    const a = (message: string) => ({ role: 'agent' as const, content: { type: AGENT_MESSAGE_PAYLOAD_TYPE, data: { type: 'message', message } }, meta: { sentFrom: 'cli' as const } })
+    const base = { id, title: 'test', file: '/tmp/test.jsonl', cwd: '/tmp/project', modifiedAt: 1 }
+    const run = (messages: Array<ReturnType<typeof u> | ReturnType<typeof a>>) => importSelectedCodexSessions({
+        codexSessionIds: [id], store, namespace: 'default', localSessions: [{ ...base, messages }],
+    })
+    const imported = await run([u('local'), a('local reply')])
+    const sid = imported.hapiSessionIds![0]
+    store.messages.addMessage(sid, a('local reply')) // native resume replay
+    store.messages.addMessage(sid, { role: 'agent', content: { type: 'codex', data: { type: 'thread_goal_cleared' } } })
+    store.messages.addMessage(sid, u('phone'))
+    store.messages.addMessage(sid, a('phone reply'))
+    const previous = process.env.HAPI_CODEX_SAFE_IMPORT
+    process.env.HAPI_CODEX_SAFE_IMPORT = '1'
+    try {
+        const result = await run([u('local'), a('local reply'), u('phone'), a('phone reply'), u('back on PC'), a('PC reply')])
+        expect(result.success).toBe(true)
+        expect(result.hapiSessionIds).toEqual(imported.hapiSessionIds)
+        expect(store.messages.getAllMessages(sid)).toHaveLength(8)
+        const repeat = await run([u('local'), a('local reply'), u('phone'), a('phone reply'), u('back on PC'), a('PC reply')])
+        expect(repeat.success).toBe(true)
+        expect(store.messages.getAllMessages(sid)).toHaveLength(8)
+    } finally {
+        if (previous === undefined) delete process.env.HAPI_CODEX_SAFE_IMPORT
+        else process.env.HAPI_CODEX_SAFE_IMPORT = previous
+    }
+})

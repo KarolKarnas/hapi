@@ -36,3 +36,27 @@ message references, cross-session isolation, traversal, symlinks, invalid media
 and oversized files. Deployments must also verify authenticated retrieval after
 stopping a session and restarting the Hub. This branch is a local extension,
 not a change already accepted upstream. The upstream AGPL-3.0 license applies.
+
+## Automatic native-history handoff (2026-09-26)
+
+The local working tree additionally supports importing native
+`image_gen.generation` completion records as lightweight generated-image cards.
+The Hub serves persisted image files for both live and imported message envelopes.
+Reimport can fill missing images without duplicating existing dialogue or cards.
+Existing names are retained.
+
+`HAPI_CODEX_SAFE_IMPORT=1` makes the importer refuse a new duplicate when an
+existing native identity has incompatible history, and refuse imports into active
+sessions. A fallback matches the ordered user/assistant conversation across live
+app-server status/replay events and appends the native suffix only. It ignores
+synthetic context and collapses adjacent identical assistant replays for matching;
+it does not delete or rewrite existing messages. Ambiguous targets are rejected.
+
+The homelab repository owns the polling timer and its local state, not HAPI's
+shared database. Deployed artifact: `0.30.7-slopthink.4` (Hub and Runner). It was
+built from the source changes recorded in this patch series.
+
+Validation: targeted Hub import/media tests, CLI native-transcript tests, Hub/CLI
+typechecks; byte-identical downloads of ten imported PNGs on the server. The first
+Lenovo-to-HAPI-to-Lenovo continuation succeeded. A further model-generated test
+was blocked by account quota; Windows was not directly tested.
