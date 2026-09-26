@@ -283,7 +283,7 @@ export function getPreviousSessionVisibleCount(current: number, step: number): n
     return Math.max(normalizedStep, current - normalizedStep)
 }
 
-function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
+export function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
     const groups = new Map<string, { directory: string; machineId: string | null; sessions: SessionSummary[] }>()
 
     sessions.forEach(session => {
@@ -304,9 +304,6 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
         .map(([key, group]) => {
             const sortedSessions = [...group.sessions].sort((a, b) => {
                 if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1
-                const rankA = a.active ? (a.pendingRequestsCount > 0 ? 0 : 1) : 2
-                const rankB = b.active ? (b.pendingRequestsCount > 0 ? 0 : 1) : 2
-                if (rankA !== rankB) return rankA - rankB
                 return b.updatedAt - a.updatedAt
             })
             const latestUpdatedAt = group.sessions.reduce(
@@ -331,9 +328,6 @@ function groupSessionsByDirectory(sessions: SessionSummary[]): SessionGroup[] {
         .sort((a, b) => {
             if (a.hasPinnedSession !== b.hasPinnedSession) {
                 return a.hasPinnedSession ? -1 : 1
-            }
-            if (a.hasActiveSession !== b.hasActiveSession) {
-                return a.hasActiveSession ? -1 : 1
             }
             return b.latestUpdatedAt - a.latestUpdatedAt
         })

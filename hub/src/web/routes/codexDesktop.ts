@@ -312,6 +312,7 @@ function truncateText(value: string, maxLength: number): string {
 }
 
 function shouldIgnoreInjectedResponseUserMessage(text: string): boolean {
+    if (text.trim().startsWith('<recommended_plugins>')) return true
     const normalized = text.trim()
     const lower = normalized.toLowerCase()
     const isAgentInstructions = lower.startsWith('# agents.md instructions')
@@ -423,6 +424,13 @@ function getLatestCodexUserMessage(lines: string[]): string | null {
     return null
 }
 
+function codexRequestPreview(text: string): string {
+    const trimmed = text.trim()
+    if (!trimmed.startsWith('# Context from my IDE setup:')) return trimmed
+    const request = trimmed.match(/^## My request(?: for Codex)?:[ \t]*\r?\n([\s\S]*)$/m)
+    return request?.[1]?.trim() || ''
+}
+
 function getCodexSessionTitle(
     cwd: string | null | undefined,
     sessionId: string,
@@ -439,7 +447,7 @@ function getCodexSessionTitle(
     }
 
     if (firstUserMessage) {
-        return truncateText(firstUserMessage, 80)
+        return truncateText(codexRequestPreview(firstUserMessage) || 'Codex conversation', 80)
     }
 
     if (cwd) {
@@ -982,7 +990,7 @@ function buildImportedSessionMetadata(
     const path = data.cwd ?? (typeof existingMetadata?.path === 'string' ? existingMetadata.path : dirname(data.file))
     const host = typeof existingMetadata?.host === 'string' ? existingMetadata.host : (process.env.HAPI_HOSTNAME || hostname())
     const osValue = typeof existingMetadata?.os === 'string' ? existingMetadata.os : platform()
-    const summaryText = data.lastUserMessage ?? data.title
+    const summaryText = data.lastUserMessage ? codexRequestPreview(data.lastUserMessage) : data.title
     const machineId = typeof existingMetadata?.machineId === 'string'
         ? existingMetadata.machineId
         : resolvedMachineId
@@ -995,7 +1003,9 @@ function buildImportedSessionMetadata(
         path,
         host,
         os: osValue,
-        name: existingMetadata?.name ?? data.title,
+        name: typeof existingMetadata?.name === 'string'
+            && !/^(# Context from my IDE|<recommended_plugins>)/.test(existingMetadata.name.trim())
+            ? existingMetadata.name : data.title,
         summary: summaryText
             ? {
                 text: summaryText,

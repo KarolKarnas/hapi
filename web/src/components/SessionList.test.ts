@@ -3,6 +3,7 @@ import { toSessionSummary, type Session } from '@hapi/protocol'
 import type { SessionSummary } from '@/types/api'
 import {
     deduplicateSessionsByAgentId,
+    groupSessionsByDirectory,
     expandSelectedSessionCollapseOverrides,
     filterActiveSessionsOnly,
     filterUnreadSessionsOnly,
@@ -651,5 +652,25 @@ describe('getPullRefreshIndicatorRotation', () => {
     it('turns the pull indicator upward once refresh is ready', () => {
         expect(getPullRefreshIndicatorRotation('pulling')).toBe(0)
         expect(getPullRefreshIndicatorRotation('ready')).toBe(180)
+    })
+})
+
+
+describe('directory list recency', () => {
+    it('sorts by recency across active states and preserves explicit pins', () => {
+        const groups = groupSessionsByDirectory([
+            makeSession({ id: 'active-old', active: true, updatedAt: 100, metadata: { path: '/p' } }),
+            makeSession({ id: 'recent', updatedAt: 300, metadata: { path: '/p' } }),
+            makeSession({ id: 'pin', pinned: true, updatedAt: 10, metadata: { path: '/p' } }),
+            makeSession({ id: 'approval', active: true, pendingRequestsCount: 1, updatedAt: 200, metadata: { path: '/p' } })
+        ])
+        expect(groups[0].sessions.map(s => s.id)).toEqual(['pin', 'recent', 'approval', 'active-old'])
+    })
+    it('sorts directories by recency rather than an idle active wrapper', () => {
+        const groups = groupSessionsByDirectory([
+            makeSession({ id: 'old', active: true, updatedAt: 100, metadata: { path: '/old' } }),
+            makeSession({ id: 'new', updatedAt: 300, metadata: { path: '/new' } })
+        ])
+        expect(groups.map(g => g.directory)).toEqual(['/new', '/old'])
     })
 })

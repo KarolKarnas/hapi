@@ -117,6 +117,22 @@ describe('listLocalCodexSessionSummaries', () => {
         rmSync(root, { recursive: true, force: true })
     })
 
+    it('uses the actual IDE request for a fallback title without changing message text', () => {
+        const root = mkdtempSync(join(tmpdir(), 'codex-title-'))
+        process.env.CODEX_HOME = root
+        mkdirSync(join(root, 'sessions'), { recursive: true })
+        const text = '# Context from my IDE setup:\n\n## Open tabs:\n- unrelated.md\n\n## My request:\nDodaj Danielowi protezę nogi'
+        writeFileSync(join(root, 'sessions', 'ide.jsonl'), [
+            JSON.stringify({ type: 'session_meta', payload: { id: 'ide-title', cwd: '/tmp/project' } }),
+            JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<recommended_plugins>ignore</recommended_plugins>' }] } }),
+            JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })
+        ].join('\n'))
+        const [session] = listLocalCodexSessionsWithMessagesByIds(new Set(['ide-title']))
+        expect(session.title).toBe('Dodaj Danielowi protezę nogi')
+        expect(session.messages[0].content).toMatchObject({ text })
+        rmSync(root, { recursive: true, force: true })
+    })
+
     it('uses the latest session_index thread name as the title', () => {
         const root = mkdtempSync(join(tmpdir(), 'codex-home-'))
         process.env.CODEX_HOME = root
@@ -192,18 +208,22 @@ describe('persisted generated image imports', () => {
             const id = '12345678-1234-1234-1234-123456789abc'
             writeFileSync(join(root, 'sessions', `rollout-${id}.jsonl`), [
                 { type: 'session_meta', payload: { id, cwd: '/tmp/project' } },
+                { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<recommended_plugins>Injected context</recommended_plugins>' }] } },
+                { type: 'event_msg', payload: { type: 'image_generation_end', status: 'completed', saved_path: `/home/another/.codex/generated_images/${id}/exec-legacy.png`, result: 'large-base64-value' } },
                 { type: 'event_msg', payload: { type: 'item_completed', thread_id: id,
                     item: { kind: 'image_gen.generation', status: 'completed', id: 'exec-example', result: 'large-base64-value' } } },
                 { type: 'event_msg', payload: { type: 'item_completed', thread_id: id,
                     item: { kind: 'image_gen.generation', status: 'completed', id: '../escape' } } },
             ].map((record) => JSON.stringify(record)).join('\n'))
             const [session] = listLocalCodexSessionsWithMessagesByIds(new Set([id]))
-            expect(session.messages).toHaveLength(1)
+            expect(session.messages).toHaveLength(2)
             expect(JSON.stringify(session.messages)).not.toContain('large-base64-value')
-            expect((session.messages[0].content as any).data).toMatchObject({
+            expect(JSON.stringify(session.messages)).not.toContain('recommended_plugins')
+            expect((session.messages[0].content as any).data.fileName).toBe('exec-legacy.png')
+            expect((session.messages[1].content as any).data).toMatchObject({
                 type: 'generated-image', fileName: 'exec-example.png', mimeType: 'image/png',
             })
-            expect((session.messages[0].content as any).data.imageId).toMatch(/^[a-f0-9]{64}$/)
+            expect((session.messages[1].content as any).data.imageId).toMatch(/^[a-f0-9]{64}$/)
         } finally {
             if (previous === undefined) delete process.env.CODEX_HOME
             else process.env.CODEX_HOME = previous

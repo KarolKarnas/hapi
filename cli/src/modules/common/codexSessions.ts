@@ -76,7 +76,7 @@ function truncateText(value: string, maxLength: number): string {
 
 function shouldIgnoreSyntheticUserMessage(text: string): boolean {
     const normalized = text.trim()
-    return normalized.startsWith('# AGENTS.md instructions') || normalized.startsWith('<environment_context>')
+    return normalized.startsWith('<recommended_plugins>') || normalized.startsWith('# AGENTS.md instructions') || normalized.startsWith('<environment_context>')
 }
 
 function inferSessionIdFromFileName(filePath: string): string | null {
@@ -183,16 +183,23 @@ function getLatestCodexUserMessage(lines: string[]): string | null {
             const payload = asRecord(record.payload)
             if (payload?.type !== 'message' || payload.role !== 'user') continue
             const text = extractCodexText(payload.content)
-            if (text && !shouldIgnoreSyntheticUserMessage(text)) return truncateText(text, 140)
+            if (text && !shouldIgnoreSyntheticUserMessage(text)) return truncateText(codexRequestPreview(text), 140)
         } catch { continue }
     }
     return null
 }
 
+function codexRequestPreview(text: string): string {
+    const trimmed = text.trim()
+    if (!trimmed.startsWith('# Context from my IDE setup:')) return trimmed
+    const request = trimmed.match(/^## My request(?: for Codex)?:[ \t]*\r?\n([\s\S]*)$/m)
+    return request?.[1]?.trim() || ''
+}
+
 function getCodexSessionTitle(cwd: string | null | undefined, sessionId: string, sessionIndexTitle: string | null, changedTitle: string | null, firstUserMessage: string | null): string {
     if (sessionIndexTitle) return truncateText(sessionIndexTitle, 80)
     if (changedTitle) return changedTitle
-    if (firstUserMessage) return truncateText(firstUserMessage, 80)
+    if (firstUserMessage) return truncateText(codexRequestPreview(firstUserMessage) || 'Codex conversation', 80)
     if (cwd) return basename(cwd) || cwd
     return sessionId.slice(0, 8)
 }
@@ -226,6 +233,17 @@ function convertCodexRecordToImportedMessage(record: Record<string, unknown>): C
     if (!type || !payload) return null
     if (type === 'event_msg') {
         const eventType = asString(payload.type)
+        if (eventType === 'image_generation_end' && payload.status === 'completed') {
+            const saved = asString(payload.saved_path)
+            const fileName = saved?.split('/').at(-1)
+            const thread = saved?.split('/').at(-2)
+            if (fileName && thread && /^[a-zA-Z0-9][a-zA-Z0-9_-]*\.png$/.test(fileName)
+                && /^[0-9a-f-]{36}$/i.test(thread)) {
+                return buildImportedAgentMessage({ type: 'generated-image',
+                    imageId: createHash('sha256').update(`${thread}:${fileName.slice(0, -4)}`).digest('hex'),
+                    fileName, mimeType: 'image/png' })
+            }
+        }
         if (eventType === 'item_completed') {
             const item = asRecord(payload.item)
             const id = asString(item?.id)
